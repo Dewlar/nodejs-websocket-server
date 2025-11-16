@@ -1,4 +1,4 @@
-import { GameAction, PlayerInfo, RoomInfo } from '../models/models';
+import { GameAction, PlayerInfo, RoomInfo, ShipInfo } from '../models/models';
 import { ClientWebSocket } from '../models/ws.models';
 import { roomsState } from '../storage/rooms';
 
@@ -7,9 +7,9 @@ export class Game {
 
   createGame(roomId: number) {
     roomsState.get(roomId)?.players?.forEach(
-      ({ ws, id }) =>
-        ws &&
-        this.sendMessage(ws, GameAction.CreateGame, {
+      ({ socket, id }) =>
+        socket &&
+        this.sendMessage(socket, GameAction.CreateGame, {
           idGame: roomId,
           idPlayer: id,
         }),
@@ -17,9 +17,9 @@ export class Game {
   }
 
   //
-  createRoom(ws: ClientWebSocket) {
+  createRoom(socket: ClientWebSocket) {
     const roomForGame = Array.from(roomsState.values()).find(
-      (item) => item.namePlayer === ws.namePlayer,
+      (item) => item.namePlayer === socket.namePlayer,
     );
 
     if (roomForGame) return;
@@ -28,9 +28,9 @@ export class Game {
 
     roomsState.set(newRoomId, {
       idRoom: newRoomId,
-      namePlayer: ws.namePlayer,
+      namePlayer: socket.namePlayer,
       idPlayerCurrent: -1,
-      players: [{ ws, id: 0, isBot: false }],
+      players: [{ socket, id: 0, isBot: false }],
     });
 
     return { roomId: newRoomId, Room: roomsState.get(newRoomId) as RoomInfo };
@@ -72,9 +72,9 @@ export class Game {
 
     if (players.every((player) => !!player.ships)) {
       players.forEach(
-        ({ ws, ships }) =>
-          ws &&
-          this.sendMessage(ws, GameAction.StartGame, {
+        ({ socket, ships }) =>
+          socket &&
+          this.sendMessage(socket, GameAction.StartGame, {
             currentPlayerIndex: player.id,
             ships,
           }),
@@ -84,9 +84,9 @@ export class Game {
     }
   }
 
-  createSinglePlay(ws: ClientWebSocket) {
+  createSinglePlay(socket: ClientWebSocket) {
     const roomThisGame = Array.from(roomsState.values()).find(
-      (item) => item.namePlayer === ws.namePlayer,
+      (item) => item.namePlayer === socket.namePlayer,
     );
 
     if (roomThisGame && roomThisGame.players.length === 2) return;
@@ -94,7 +94,7 @@ export class Game {
     let currentRoom = roomThisGame;
 
     if (!currentRoom) {
-      const roomId = this.createRoom(ws)?.roomId as number;
+      const roomId = this.createRoom(socket)?.roomId as number;
       currentRoom = roomsState.get(roomId) as RoomInfo;
     }
 
@@ -143,9 +143,9 @@ export class Game {
           cell.isAttacked = true;
 
           roomThisGame.players.forEach(
-            ({ ws }) =>
-              ws &&
-              this.sendMessage(ws, GameAction.Attack, {
+            ({ socket }) =>
+              socket &&
+              this.sendMessage(socket, GameAction.Attack, {
                 position: { x, y },
                 currentPlayer: roomThisGame.idPlayerCurrent,
                 status: GameAction.Miss,
@@ -160,9 +160,9 @@ export class Game {
     }
 
     players.forEach(
-      ({ ws }) =>
-        ws &&
-        this.sendMessage(ws, GameAction.Attack, {
+      ({ socket }) =>
+        socket &&
+        this.sendMessage(socket, GameAction.Attack, {
           position: { x, y },
           currentPlayer: indexPlayer,
           status: attackResult.status,
@@ -176,7 +176,7 @@ export class Game {
 
       return competitorPlayer.isBot || currentPlayer.isBot
         ? undefined
-        : currentPlayer.ws?.namePlayer;
+        : currentPlayer.socket?.namePlayer;
     }
 
     this.nextStep(
@@ -189,8 +189,7 @@ export class Game {
     const { gameId, indexPlayer } = JSON.parse(dataString);
     const competitorId = indexPlayer === 1 ? 0 : 1;
     const competitorPlayer = roomsState
-    .get(gameId)
-    ?.players?.find((player) => player.id === competitorId);
+    .get(gameId)?.players?.find((player) => player.id === competitorId);
 
     if (!competitorPlayer) return;
 
@@ -209,25 +208,24 @@ export class Game {
 
   gameOver(players: PlayerInfo[], winnerPlayerIndex: number) {
     players.forEach(
-      ({ ws }) =>
-        ws &&
-        this.sendMessage(ws, GameAction.Finish, { winPlayer: winnerPlayerIndex }),
+      ({ socket }) =>
+        socket && this.sendMessage(socket, GameAction.Finish, { winPlayer: winnerPlayerIndex }),
     );
   }
 
-  closeRoom(ws: ClientWebSocket) {
+  closeRoom(socket: ClientWebSocket) {
     const roomThisGame = Array.from(roomsState.values()).find(
       (item) =>
-        item.namePlayer === ws.namePlayer ||
-        (item.players[1]?.ws?.namePlayer === ws.namePlayer &&
+        item.namePlayer === socket.namePlayer ||
+        (item.players[1]?.socket?.namePlayer === socket.namePlayer &&
           item.players.length === 2),
     );
 
     if (!roomThisGame) return;
 
-    const winnerPlayerIndex = roomThisGame.namePlayer === ws.namePlayer ? 1 : 0;
+    const winnerPlayerIndex = roomThisGame.namePlayer === socket.namePlayer ? 1 : 0;
     const winnerUserName =
-      roomThisGame.players[winnerPlayerIndex]?.ws?.namePlayer;
+      roomThisGame.players[winnerPlayerIndex]?.socket?.namePlayer;
 
     this.gameOver(roomThisGame.players, winnerPlayerIndex);
 
@@ -236,10 +234,9 @@ export class Game {
     return winnerUserName;
   }
 
-  private sendMessage(ws: ClientWebSocket, type: string, data: any) {
+  private sendMessage(socket: ClientWebSocket, type: string, data: any) {
     const message = JSON.stringify({ type, data: JSON.stringify(data), id: 0 });
-    console.log('message', message);
-    ws.send(message);
+    socket.send(message);
   }
 
   private nextStep(gameId: number, nextPlayerId?: number) {
@@ -251,9 +248,9 @@ export class Game {
       roomThisGame.idPlayerCurrent = nextPlayerId;
     }
 
-    roomThisGame.players.forEach(({ ws, isBot, id }) => {
-      ws &&
-      this.sendMessage(ws, GameAction.Turn, {
+    roomThisGame.players.forEach(({ socket, isBot, id }) => {
+      socket &&
+      this.sendMessage(socket, GameAction.Turn, {
         currentPlayer: roomThisGame.idPlayerCurrent,
       });
 

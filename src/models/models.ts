@@ -3,6 +3,9 @@ import { ClientWebSocket } from './ws.models';
 export type PlayerInfo = {
   id?: number;
   socket?: ClientWebSocket;
+  ships?: any;
+  game?: any;
+  isBot: boolean;
 };
 
 export type UserInfo = {
@@ -18,6 +21,17 @@ export type RoomInfo = {
   idPlayerCurrent: number;
   namePlayer: string;
   players: PlayerInfo[];
+};
+
+export type ShipInfo = {
+  position: {
+    x: number;
+    y: number;
+  };
+  direction: boolean;
+  length: number;
+  type: 'small' | 'medium' | 'large' | 'huge';
+  hp?: number;
 };
 
 export enum GameAction {

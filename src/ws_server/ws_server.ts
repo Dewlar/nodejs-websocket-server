@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import { httpServer } from '../http_server';
-import { ClientWebSocket } from '../models/ws.models';
+import { GameAction } from '../models/models';
+import { ClientWebSocket, SocketMessage } from '../models/ws.models';
 import { BattleshipServer } from './battleship-server';
 
 export const webSocketServer = new WebSocketServer({ server: httpServer });
@@ -42,7 +43,47 @@ webSocketServer.on('connection', (socket: ClientWebSocket, req) => {
 
   socket
   .on('pong', () => (socket.isActive = true))
-  .on('message', () => {})
+  .on('message', (rawMessage: WebSocket.RawData) => {
+    const message: SocketMessage = JSON.parse(rawMessage.toString());
+
+    switch (message.type) {
+      case GameAction.Registration: {
+        server.registerPlayer(socket, message);
+        break;
+      }
+
+      case GameAction.AddShips: {
+        server.addShips(message);
+        break;
+      }
+
+      case GameAction.Attack: {
+        server.attack(message);
+        break;
+      }
+
+      case GameAction.RandomAttack: {
+        server.randomAttack(message);
+        break;
+      }
+
+      case GameAction.SinglePlay: {
+        server.singlePlay(socket);
+        break;
+      }
+
+      case GameAction.CreateRoom: {
+        server.createRoom(socket);
+        break;
+      }
+
+      case GameAction.AddUserToRoom: {
+        server.addUserToRoom(socket, message);
+        break;
+      }
+    }
+
+  })
   .on('close', () => server.cleanSocket(socket))
   .on('error', console.error);
 });

@@ -56,6 +56,5 @@ export class Players {
   private sendMessage(socket: ClientWebSocket, type: string, data: any) {
     const message = JSON.stringify({ type, data: JSON.stringify(data), id: 0 });
     socket.send(message);
-    console.log('sendMessage: ', message);
   }
 }
