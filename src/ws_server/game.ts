@@ -16,7 +16,6 @@ export class Game {
     );
   }
 
-  //
   createRoom(socket: ClientWebSocket) {
     const roomForGame = Array.from(roomsState.values()).find(
       (item) => item.namePlayer === socket.namePlayer,
