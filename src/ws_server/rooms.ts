@@ -21,6 +21,7 @@ export class Room {
       data: JSON.stringify(freeRooms),
     });
 
+    console.log(GameAction.UpdateRoom, message);
     webSocketServer.clients.forEach((client) => client.send(message));
   }
 

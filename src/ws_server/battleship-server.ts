@@ -73,6 +73,7 @@ export class BattleshipServer {
       data: JSON.stringify(winners),
     });
 
+    console.log(GameAction.UpdateWinners, message);
     this.webSocketServer.clients.forEach((client) => client.send(message));
   }
 
