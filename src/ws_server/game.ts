@@ -1,4 +1,4 @@
-import { GameAction, PlayerInfo, RoomInfo, ShipInfo } from '../models/models';
+import { Cell, GameAction, PlayerInfo, RoomInfo, ShipInfo } from '../models/models';
 import { ClientWebSocket } from '../models/ws.models';
 import { roomsState } from '../storage/rooms';
 
@@ -91,6 +91,8 @@ export class Game {
 
     if (roomThisGame && roomThisGame.players.length === 2) return;
 
+    const bot = this.createBotPlayer();
+
     let currentRoom = roomThisGame;
 
     if (!currentRoom) {
@@ -98,7 +100,7 @@ export class Game {
       currentRoom = roomsState.get(roomId) as RoomInfo;
     }
 
-    currentRoom.players = [currentRoom.players[0] as PlayerInfo];
+    currentRoom.players = [currentRoom.players[0] as PlayerInfo, bot];
     this.createGame(currentRoom.idRoom);
   }
 
@@ -255,10 +257,7 @@ export class Game {
       });
 
       if (isBot && roomThisGame.idPlayerCurrent === id) {
-        setTimeout(
-          () => this.attackRandom(JSON.stringify({ gameId, indexPlayer: id })),
-          500,
-        );
+        setTimeout(() => this.attackRandom(JSON.stringify({ gameId, indexPlayer: id })), 500);
       }
     });
   }
@@ -283,5 +282,113 @@ export class Game {
       status: ship.hp === 0 ? GameAction.Killed : GameAction.Shot,
       shipIndex: cell.shipIndex,
     };
+  }
+
+  createBotPlayer(): PlayerInfo {
+    const ships: ShipInfo[] = [];
+    const shipTypes: ('small' | 'medium' | 'large' | 'huge')[] = [
+      'huge',
+      'large',
+      'medium',
+      'small',
+    ];
+    const shipLengths = [4, 3, 2, 1];
+    const shipCounts = [1, 2, 3, 4];
+    const gridSize = 10;
+    const grid: boolean[][] = Array.from({ length: gridSize }, () =>
+      new Array(gridSize).fill(false),
+    );
+
+    for (let i = 0; i < shipTypes.length; i++) {
+      const shipType = shipTypes[i];
+      const shipLength = shipLengths[i];
+      const shipCount = shipCounts[i];
+
+      if (
+        shipCount !== undefined &&
+        shipLength !== undefined &&
+        shipType !== undefined
+      ) {
+        for (let j = 0; j < shipCount; j++) {
+          let isPlaced = false;
+
+          while (!isPlaced) {
+            const direction = Math.random() < 0.5;
+            const { x, y } = this.getRandomPosition(
+              gridSize,
+              shipLength,
+              direction,
+            );
+
+            if (!this.isValidPlacement(grid, x, y, shipLength, direction))
+              continue;
+
+            this.placeShip(grid, x, y, shipLength, direction);
+
+            ships.push({
+              position: { x, y },
+              direction,
+              length: shipLength,
+              type: shipType,
+              hp: shipLength,
+            });
+
+            isPlaced = true;
+          }
+        }
+      }
+    }
+
+    const board: Cell[][] = Array.from({ length: gridSize }, () =>
+      Array.from({ length: gridSize }, () => ({
+        shipIndex: -1,
+        isAttacked: false,
+      })),
+    );
+
+    ships.forEach((ship, index) => {
+      ship.hp = ship.length;
+
+      const { x, y } = ship.position;
+      const shipLength = ship.length;
+
+      for (let i = 0; i < shipLength; i++) {
+        const cell = ship.direction ? board[x]?.[y + i] : board[x + i]?.[y];
+
+        if (cell && cell.shipIndex === -1) {
+          cell.shipIndex = index;
+        }
+      }
+    });
+
+    return { id: 1, isBot: true, ships, game: board };
+  }
+
+  private getRandomPosition(gridSize: number, shipLength: number, direction: boolean) {
+    const x = Math.floor(Math.random() * (gridSize - (direction ? 0 : shipLength)));
+    const y = Math.floor(Math.random() * (gridSize - (direction ? shipLength : 0)));
+
+    return { x, y };
+  }
+
+  private isValidPlacement(grid: boolean[][], x: number, y: number, shipLength: number, direction: boolean) {
+    for (let i = -1; i < shipLength + 1; i++) {
+      for (let j = -1; j < 2; j++) {
+        const newX = direction ? x + j : x + i;
+        const newY = direction ? y + i : y + j;
+
+        if (grid[newX]?.[newY]) return false;
+      }
+    }
+
+    return true;
+  }
+
+  private placeShip(grid: boolean[][], x: number, y: number, shipLength: number, direction: boolean) {
+    for (let i = 0; i < shipLength; i++) {
+      const newX = direction ? x : x + i;
+      const newY = direction ? y + i : y;
+      (grid[newX] as boolean[])[newY] = true;
+    }
   }
 }

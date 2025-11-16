@@ -52,3 +52,8 @@ export enum GameAction {
   Shot = 'shot',
   Miss = 'miss',
 }
+
+export type Cell = {
+  shipIndex: number;
+  isAttacked: boolean;
+};
