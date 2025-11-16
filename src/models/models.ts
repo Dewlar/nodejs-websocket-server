@@ -3,8 +3,8 @@ import { ClientWebSocket } from './ws.models';
 export type PlayerInfo = {
   id?: number;
   socket?: ClientWebSocket;
-  ships?: any;
-  game?: any;
+  ships?: ShipInfo[];
+  game?: { shipIndex: number; isAttacked: boolean }[][];
   isBot: boolean;
 };
 
