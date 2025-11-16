@@ -1,0 +1,290 @@
+import { GameAction, PlayerInfo, RoomInfo } from '../models/models';
+import { ClientWebSocket } from '../models/ws.models';
+import { roomsState } from '../storage/rooms';
+
+export class Game {
+  roomsCounter = 1;
+
+  createGame(roomId: number) {
+    roomsState.get(roomId)?.players?.forEach(
+      ({ ws, id }) =>
+        ws &&
+        this.sendMessage(ws, GameAction.CreateGame, {
+          idGame: roomId,
+          idPlayer: id,
+        }),
+    );
+  }
+
+  //
+  createRoom(ws: ClientWebSocket) {
+    const roomForGame = Array.from(roomsState.values()).find(
+      (item) => item.namePlayer === ws.namePlayer,
+    );
+
+    if (roomForGame) return;
+
+    const newRoomId = this.roomsCounter++;
+
+    roomsState.set(newRoomId, {
+      idRoom: newRoomId,
+      namePlayer: ws.namePlayer,
+      idPlayerCurrent: -1,
+      players: [{ ws, id: 0, isBot: false }],
+    });
+
+    return { roomId: newRoomId, Room: roomsState.get(newRoomId) as RoomInfo };
+  }
+
+  addShips(dataString: string) {
+    const { gameId, indexPlayer, ships } = JSON.parse(dataString);
+
+    const roomThisGame = roomsState.get(gameId);
+    const players = roomThisGame?.players;
+    const player = players?.[indexPlayer];
+
+    if (!roomThisGame || !player) return;
+
+    player.ships = ships;
+
+    const board = Array.from({ length: 10 }, () =>
+      Array.from({ length: 10 }, () => ({
+        ...{ shipIndex: -1, isAttacked: false },
+      })),
+    );
+
+    ships.forEach((ship: ShipInfo, id: number) => {
+      ship.hp = ship.length;
+
+      const { x, y } = ship.position;
+      const shipLength = ship.length;
+
+      for (let i = 0; i < shipLength; i++) {
+        const cell = ship.direction ? board[x]?.[y + i] : board[x + i]?.[y];
+
+        if (cell && cell.shipIndex === -1) {
+          cell.shipIndex = id;
+        }
+      }
+    });
+
+    player.game = board;
+
+    if (players.every((player) => !!player.ships)) {
+      players.forEach(
+        ({ ws, ships }) =>
+          ws &&
+          this.sendMessage(ws, GameAction.StartGame, {
+            currentPlayerIndex: player.id,
+            ships,
+          }),
+      );
+
+      this.nextStep(gameId, player.id === 1 ? 0 : 1);
+    }
+  }
+
+  createSinglePlay(ws: ClientWebSocket) {
+    const roomThisGame = Array.from(roomsState.values()).find(
+      (item) => item.namePlayer === ws.namePlayer,
+    );
+
+    if (roomThisGame && roomThisGame.players.length === 2) return;
+
+    let currentRoom = roomThisGame;
+
+    if (!currentRoom) {
+      const roomId = this.createRoom(ws)?.roomId as number;
+      currentRoom = roomsState.get(roomId) as RoomInfo;
+    }
+
+    currentRoom.players = [currentRoom.players[0] as PlayerInfo];
+    this.createGame(currentRoom.idRoom);
+  }
+
+  attack(dataString: string) {
+    const { gameId, indexPlayer, x, y } = JSON.parse(dataString);
+    const roomThisGame = roomsState.get(gameId);
+    const players = roomThisGame?.players;
+
+    if (!roomThisGame || roomThisGame.idPlayerCurrent !== indexPlayer) return;
+
+    const competitorId = indexPlayer === 1 ? 0 : 1;
+    const competitorPlayer = players?.[competitorId];
+
+    if (!competitorPlayer) return;
+
+    const currentPlayer = players?.[indexPlayer];
+
+    if (!currentPlayer) return;
+
+    const attackResult = this.resultAttack(competitorPlayer, x, y);
+
+    if (!attackResult) return;
+
+    let isWin = false;
+
+    if (attackResult.status === GameAction.Killed) {
+      const ship = competitorPlayer.ships?.[attackResult.shipIndex];
+
+      if (!ship) return;
+
+      const shipLength = ship.length;
+
+      for (let i = -1; i < shipLength + 1; i++) {
+        for (let j = -1; j < 2; j++) {
+          const x = ship.position.x + (ship.direction ? j : i);
+          const y = ship.position.y + (ship.direction ? i : j);
+
+          const cell = competitorPlayer.game?.[x]?.[y];
+
+          if (!cell || cell.isAttacked) continue;
+
+          cell.isAttacked = true;
+
+          roomThisGame.players.forEach(
+            ({ ws }) =>
+              ws &&
+              this.sendMessage(ws, GameAction.Attack, {
+                position: { x, y },
+                currentPlayer: roomThisGame.idPlayerCurrent,
+                status: GameAction.Miss,
+              }),
+          );
+
+          this.nextStep(roomThisGame.idRoom);
+        }
+      }
+
+      isWin = !!competitorPlayer.ships?.every((ship) => ship.hp === 0);
+    }
+
+    players.forEach(
+      ({ ws }) =>
+        ws &&
+        this.sendMessage(ws, GameAction.Attack, {
+          position: { x, y },
+          currentPlayer: indexPlayer,
+          status: attackResult.status,
+        }),
+    );
+
+    if (isWin) {
+      this.gameOver(players, indexPlayer);
+
+      roomsState?.delete(gameId);
+
+      return competitorPlayer.isBot || currentPlayer.isBot
+        ? undefined
+        : currentPlayer.ws?.namePlayer;
+    }
+
+    this.nextStep(
+      gameId,
+      attackResult.status === GameAction.Miss ? competitorId : undefined,
+    );
+  }
+
+  attackRandom(dataString: string) {
+    const { gameId, indexPlayer } = JSON.parse(dataString);
+    const competitorId = indexPlayer === 1 ? 0 : 1;
+    const competitorPlayer = roomsState
+    .get(gameId)
+    ?.players?.find((player) => player.id === competitorId);
+
+    if (!competitorPlayer) return;
+
+    while (true) {
+      const x = Math.floor(Math.random() * 10);
+      const y = Math.floor(Math.random() * 10);
+
+      const cell = competitorPlayer.game?.[x]?.[y];
+
+      if (!cell || cell.isAttacked) continue;
+
+      this.attack(JSON.stringify({ gameId, indexPlayer, x, y }));
+      break;
+    }
+  }
+
+  gameOver(players: PlayerInfo[], winnerPlayerIndex: number) {
+    players.forEach(
+      ({ ws }) =>
+        ws &&
+        this.sendMessage(ws, GameAction.Finish, { winPlayer: winnerPlayerIndex }),
+    );
+  }
+
+  closeRoom(ws: ClientWebSocket) {
+    const roomThisGame = Array.from(roomsState.values()).find(
+      (item) =>
+        item.namePlayer === ws.namePlayer ||
+        (item.players[1]?.ws?.namePlayer === ws.namePlayer &&
+          item.players.length === 2),
+    );
+
+    if (!roomThisGame) return;
+
+    const winnerPlayerIndex = roomThisGame.namePlayer === ws.namePlayer ? 1 : 0;
+    const winnerUserName =
+      roomThisGame.players[winnerPlayerIndex]?.ws?.namePlayer;
+
+    this.gameOver(roomThisGame.players, winnerPlayerIndex);
+
+    roomsState.delete(roomThisGame.idRoom);
+
+    return winnerUserName;
+  }
+
+  private sendMessage(ws: ClientWebSocket, type: string, data: any) {
+    const message = JSON.stringify({ type, data: JSON.stringify(data), id: 0 });
+    console.log('message', message);
+    ws.send(message);
+  }
+
+  private nextStep(gameId: number, nextPlayerId?: number) {
+    const roomThisGame = roomsState.get(gameId);
+
+    if (!roomThisGame || !roomThisGame.players) return;
+
+    if (nextPlayerId !== undefined) {
+      roomThisGame.idPlayerCurrent = nextPlayerId;
+    }
+
+    roomThisGame.players.forEach(({ ws, isBot, id }) => {
+      ws &&
+      this.sendMessage(ws, GameAction.Turn, {
+        currentPlayer: roomThisGame.idPlayerCurrent,
+      });
+
+      if (isBot && roomThisGame.idPlayerCurrent === id) {
+        setTimeout(
+          () => this.attackRandom(JSON.stringify({ gameId, indexPlayer: id })),
+          500,
+        );
+      }
+    });
+  }
+
+  private resultAttack(competitorPlayer: PlayerInfo, x: number, y: number) {
+    const cell = competitorPlayer.game?.[x]?.[y];
+
+    if (!cell || cell.isAttacked) return;
+
+    cell.isAttacked = true;
+
+    if (cell.shipIndex === -1)
+      return { status: GameAction.Miss, shipIndex: cell.shipIndex };
+
+    const ship = competitorPlayer.ships?.[cell.shipIndex];
+
+    if (!ship || !ship.hp) return;
+
+    ship.hp -= 1;
+
+    return {
+      status: ship.hp === 0 ? GameAction.Killed : GameAction.Shot,
+      shipIndex: cell.shipIndex,
+    };
+  }
+}
